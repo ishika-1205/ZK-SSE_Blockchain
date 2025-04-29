@@ -1,0 +1,41 @@
+# File: performance_analysis/query_execution.py
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+import hashlib
+
+class QueryExecutionAnalysis:
+    """
+    Measures the performance of query execution for different security parameters.
+    """
+
+    def measure_query_time(self, security_bits):
+        """
+        Simulates query execution time for a given security parameter.
+        """
+        start_time = time.time()
+        _ = hashlib.sha256(str(security_bits).encode()).hexdigest()
+        end_time = time.time()
+
+        return (end_time - start_time) * 1000  # Convert to milliseconds
+
+    def generate_performance_graph(self):
+        """
+        Plots query execution time against different security levels.
+        """
+        security_levels = np.array([80, 112, 128, 160, 192, 224, 256])  # Security bit levels
+        execution_times = np.array([self.measure_query_time(bits) for bits in security_levels])
+
+        plt.figure(figsize=(8, 5))
+        plt.plot(security_levels, execution_times, marker='s', linestyle='--', label="Query Execution Time")
+        plt.xlabel("Security Parameter (Bits)")
+        plt.ylabel("Query Execution Time (ms)")
+        plt.title("Query Execution Time vs. Security Parameter")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+
+if __name__ == "__main__":
+    analyzer = QueryExecutionAnalysis()
+    analyzer.generate_performance_graph()

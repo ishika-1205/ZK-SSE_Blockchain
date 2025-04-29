@@ -1,0 +1,66 @@
+# File: performance_analysis/retrieval_performance.py
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+from ipfs_integration import IPFSStorage
+
+class RetrievalPerformanceAnalysis:
+    """
+    Evaluates message retrieval and storage overhead in the ZK-SSE system.
+    """
+
+    def __init__(self):
+        self.ipfs = IPFSStorage()
+
+    def measure_retrieval_time(self, num_messages):
+        """
+        Simulates message retrieval time for different numbers of messages.
+        """
+        start_time = time.time()
+        for _ in range(num_messages):
+            self.ipfs.retrieve_from_ipfs("QmSampleCID123")  # Simulated retrieval
+        end_time = time.time()
+
+        return (end_time - start_time) * 1000  # Convert to milliseconds
+
+    def measure_storage_overhead(self, num_transactions):
+        """
+        Simulates storage overhead for varying numbers of transactions.
+        """
+        return num_transactions * 50  # Assume 50KB storage per transaction
+
+    def generate_performance_graphs(self):
+        """
+        Generates graphs for message retrieval time and storage overhead.
+        """
+        num_messages = np.array([10, 20, 30, 40, 50, 60, 70, 80, 90, 100])
+        retrieval_times = np.array([self.measure_retrieval_time(n) for n in num_messages])
+
+        num_transactions = np.array([100, 200, 300, 400, 500, 600, 700, 800, 900, 1000])
+        storage_overhead = np.array([self.measure_storage_overhead(n) for n in num_transactions])
+
+        # Plot Message Retrieval Time
+        plt.figure(figsize=(8, 5))
+        plt.plot(num_messages, retrieval_times, marker='o', linestyle='-', label="Retrieval Time")
+        plt.xlabel("Number of Messages Retrieved")
+        plt.ylabel("Retrieval Time (ms)")
+        plt.title("Message Retrieval Time vs. Number of Messages")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+        # Plot Storage Overhead
+        plt.figure(figsize=(8, 5))
+        plt.plot(num_transactions, storage_overhead, marker='^', linestyle='-.', label="Storage Overhead")
+        plt.xlabel("Number of Transactions")
+        plt.ylabel("Storage Overhead (KB)")
+        plt.title("Storage Overhead vs. Number of Transactions")
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+
+
+
+if __name__ == "__main__":
+    analyzer = RetrievalPerformanceAnalysis()
+    analyzer.generate_performance_graphs()

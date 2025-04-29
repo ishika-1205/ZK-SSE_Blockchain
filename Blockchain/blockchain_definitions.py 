@@ -1,0 +1,219 @@
+# File: blockchain/blockchain_definitions.py
+import hashlib
+import json
+import time
+import pickle
+import os
+from urllib.parse import urlparse
+import requests
+
+class BlockchainDefinitions:
+    """
+    Implements utility functions for blockchain operations, including hash computation, 
+    data persistence, node registration, and consensus mechanisms.
+    """
+
+    def __init__(self):
+        """
+        Initializes blockchain-related metadata and storage files.
+        """
+        self.current_transactions = []
+        self.chain = []
+        self.nodes = set()
+        self.data_dir = "blockchain_data"
+
+        # Define storage files
+        self.nodes_filename = os.path.join(self.data_dir, "nodes.pkl")
+        self.blockchain_filename = os.path.join(self.data_dir, "blockchain.pkl")
+
+        # Create necessary directories if not exists
+        if not os.path.exists(self.data_dir):
+            os.makedirs(self.data_dir)
+
+        # Load previous blockchain data
+        self.load_values()
+
+        # Create genesis block if blockchain is empty
+        if len(self.chain) == 0:
+            self.new_block(previous_hash="1", proof=100)
+
+    def register_node(self, address):
+        """
+        Registers a new node to the blockchain network.
+        """
+        parsed_url = urlparse(address)
+        if parsed_url.netloc:
+            self.nodes.add(parsed_url.netloc)
+        elif parsed_url.path:
+            self.nodes.add(parsed_url.path)
+        else:
+            raise ValueError("Invalid Node Address")
+        print(f"[✔] Node Registered: {address}")
+
+    def resolve_conflicts(self):
+        """
+        Implements consensus mechanism to resolve blockchain conflicts and synchronize nodes.
+        """
+        neighbors = self.nodes
+        new_chain = None
+        max_length = len(self.chain)
+
+        for node in neighbors:
+            try:
+                response = requests.get(f"http://{node}/chain")
+                if response.status_code == 200:
+                    length = response.json()["length"]
+                    chain = response.json()["chain"]
+
+                    if length > max_length and self.valid_chain(chain):
+                        max_length = length
+                        new_chain = chain
+            except Exception as e:
+                print(f"[❌] Error Connecting to Node {node}: {e}")
+
+        if new_chain:
+            self.chain = new_chain
+            print("[✔] Blockchain Updated via Consensus")
+            return True
+        return False
+
+    def new_block(self, previous_hash, proof):
+        """
+        Creates a new block and adds it to the blockchain.
+        """
+        block = {
+            "index": len(self.chain) + 1,
+            "timestamp": time.time(),
+            "transactions": self.current_transactions,
+            "previous_hash": previous_hash or self.hash(self.chain[-1]),
+            "proof": proof,
+        }
+
+        self.current_transactions = []
+        self.chain.append(block)
+        self.save_values()
+
+        print(f"[✔] Block {block['index']} Added to Chain")
+        return block
+
+    def new_transaction(self, transaction):
+        """
+        Adds a new transaction to the pending transactions list.
+        """
+        self.current_transactions.append(transaction)
+        print(f"[✔] Transaction Added: {transaction}")
+        return self.last_block["index"] + 1
+
+    def hash(self, block):
+        """
+        Creates a SHA-256 hash of a block.
+        """
+        block_string = json.dumps(block, sort_keys=True).encode()
+        return hashlib.sha256(block_string).hexdigest()
+
+    def valid_chain(self, chain):
+        """
+        Validates the blockchain by ensuring each block links correctly.
+        """
+        last_block = chain[0]
+        current_index = 1
+
+        while current_index < len(chain):
+            block = chain[current_index]
+
+            if block["previous_hash"] != self.hash(last_block):
+                return False
+
+            last_block = block
+            current_index += 1
+
+        return True
+
+    def load_values(self):
+        """
+        Loads blockchain and registered node data from disk.
+        """
+        if os.path.exists(self.blockchain_filename):
+            with open(self.blockchain_filename, "rb") as f:
+                self.chain = pickle.load(f)
+
+        if os.path.exists(self.nodes_filename):
+            with open(self.nodes_filename, "rb") as f:
+                self.nodes = pickle.load(f)
+
+    def save_values(self):
+        """
+        Saves blockchain and node data to disk.
+        """
+        with open(self.blockchain_filename, "wb") as f:
+            pickle.dump(self.chain, f, pickle.HIGHEST_PROTOCOL)
+
+        with open(self.nodes_filename, "wb") as f:
+            pickle.dump(self.nodes, f, pickle.HIGHEST_PROTOCOL)
+
+    def get_file_names(self):
+        """
+        Retrieves names of files stored in the blockchain.
+        """
+        file_names = []
+        for block in self.chain:
+            for transaction in block["transactions"]:
+                file_names.append(transaction["Metadata"]["CID"])
+        return file_names
+
+    def validate_transaction(self, transaction):
+        """
+        Validates the integrity of a transaction before it is added to the blockchain.
+        """
+        metadata = transaction["Metadata"]
+        computed_hash = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+
+        if computed_hash == transaction["Signature"]:
+            print("[✔] Transaction Validated Successfully")
+            return True
+        else:
+            print("[❌] Transaction Validation Failed!")
+            return False
+
+    def get_transaction(self, cid):
+        """
+        Retrieves a specific transaction using the content identifier (CID).
+        """
+        for block in self.chain:
+            for transaction in block["transactions"]:
+                if transaction["Metadata"]["CID"] == cid:
+                    return transaction
+        return None
+
+# ========================== TEST IMPLEMENTATION ==========================
+
+if __name__ == "__main__":
+    blockchain_def = BlockchainDefinitions()
+
+    # Register Simulated Nodes
+    blockchain_def.register_node("http://127.0.0.1:5001")
+    blockchain_def.register_node("http://127.0.0.1:5002")
+
+    # Simulated Transaction
+    transaction_data = {
+        "Metadata": {
+            "H(CM)": "sample_hash_value",
+            "CID": "QmSampleCID123",
+            "Access Policy": "Restricted to IoT Devices",
+        },
+        "Signature": hashlib.sha256(json.dumps({
+            "H(CM)": "sample_hash_value",
+            "CID": "QmSampleCID123",
+            "Access Policy": "Restricted to IoT Devices",
+        }, sort_keys=True).encode()).hexdigest(),
+    }
+
+    # Add and Validate Transaction
+    blockchain_def.new_transaction(transaction_data)
+    blockchain_def.validate_transaction(transaction_data)
+
+    # Mine a New Block
+    blockchain_def.new_block(previous_hash="1", proof=12345)
+
+    # Print Blockchain
+    print("[✔] Blockchain Data:", blockchain_def.chain)

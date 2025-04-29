@@ -1,0 +1,163 @@
+# File: blockchain/blockchain_PC.py
+import hashlib
+import json
+import time
+import threading
+from urllib.parse import urlparse
+from flask import Flask, jsonify, request
+from transaction_handler import TransactionHandler
+from blockchain_sse import BlockchainSSE
+
+class BlockchainPC:
+    """
+    Implements the main blockchain node handling mining, transaction validation,
+    and metadata anchoring for the ZK-SSE chain.
+    """
+
+    def __init__(self):
+        """
+        Initializes the Blockchain Node.
+        """
+        self.blockchain = BlockchainSSE()
+        self.transaction_handler = TransactionHandler(self.blockchain)
+        self.nodes = set()
+        self.app = Flask(__name__)
+
+        # Start Blockchain Network Node
+        threading.Thread(target=self.run_server, daemon=True).start()
+
+    def register_node(self, address):
+        """
+        Registers a new node in the blockchain network.
+        """
+        parsed_url = urlparse(address)
+        if parsed_url.netloc:
+            self.nodes.add(parsed_url.netloc)
+        elif parsed_url.path:
+            self.nodes.add(parsed_url.path)
+        else:
+            raise ValueError("Invalid Node Address")
+
+    def mine_block(self):
+        """
+        Mines a new block and validates pending transactions.
+        """
+        last_block = self.blockchain.last_block
+        proof = self.blockchain.proof_of_work(last_block["proof"])
+        previous_hash = self.blockchain.hash(last_block)
+        new_block = self.blockchain.new_block(previous_hash, proof)
+
+        response = {
+            "message": "New Block Mined Successfully",
+            "index": new_block["index"],
+            "transactions": new_block["transactions"],
+            "previous_hash": new_block["previous_hash"],
+        }
+        print(f"[✔] Block Mined: {response}")
+        return response
+
+    def validate_chain(self):
+        """
+        Validates the blockchain for consistency.
+        """
+        chain = self.blockchain.chain
+        for index in range(1, len(chain)):
+            if chain[index]["previous_hash"] != self.blockchain.hash(chain[index - 1]):
+                return False
+        return True
+
+    def run_server(self):
+        """
+        Runs the Flask server for API interactions.
+        """
+        @self.app.route("/mine", methods=["GET"])
+        def mine():
+            return jsonify(self.mine_block()), 200
+
+        @self.app.route("/chain", methods=["GET"])
+        def full_chain():
+            response = {"chain": self.blockchain.chain, "length": len(self.blockchain.chain)}
+            return jsonify(response), 200
+
+        @self.app.route("/transactions/new", methods=["POST"])
+        def new_transaction():
+            values = request.get_json()
+            required_fields = ["device_id", "message", "keywords"]
+            if not all(k in values for k in required_fields):
+                return "Missing values", 400
+
+            transaction_index = self.transaction_handler.create_transaction(values["device_id"], values["message"], values["keywords"])
+            response = {"message": f"Transaction will be added to Block {transaction_index}"}
+            return jsonify(response), 201
+
+        @self.app.route("/nodes/register", methods=["POST"])
+        def register_nodes():
+            values = request.get_json()
+            nodes = values.get("nodes")
+            if nodes is None:
+                return "Error: Please supply a valid list of nodes", 400
+
+            for node in nodes:
+                self.register_node(node)
+
+            response = {"message": "New nodes have been added", "total_nodes": list(self.nodes)}
+            return jsonify(response), 201
+
+        @self.app.route("/nodes/resolve", methods=["GET"])
+        def consensus():
+            replaced = self.resolve_conflicts()
+            if replaced:
+                response = {"message": "Our chain was replaced", "new_chain": self.blockchain.chain}
+            else:
+                response = {"message": "Our chain is authoritative", "chain": self.blockchain.chain}
+            return jsonify(response), 200
+
+        self.app.run(host="0.0.0.0", port=5000)
+
+    def resolve_conflicts(self):
+        """
+        Implements consensus to resolve blockchain conflicts and keep longest chain.
+        """
+        new_chain = None
+        max_length = len(self.blockchain.chain)
+
+        for node in self.nodes:
+            try:
+                response = request.get(f"http://{node}/chain")
+                if response.status_code == 200:
+                    length = response.json()["length"]
+                    chain = response.json()["chain"]
+
+                    if length > max_length and self.validate_chain():
+                        max_length = length
+                        new_chain = chain
+            except Exception as e:
+                print(f"[❌] Error Connecting to Node {node}: {e}")
+
+        if new_chain:
+            self.blockchain.chain = new_chain
+            return True
+        return False
+
+
+
+if __name__ == "__main__":
+    blockchain_node = BlockchainPC()
+
+    # Register Simulated Nodes
+    blockchain_node.register_node("http://127.0.0.1:5001")
+    blockchain_node.register_node("http://127.0.0.1:5002")
+
+    # Simulated IoT Device Transaction
+    transaction_data = {
+        "device_id": "iot_device_1",
+        "message": "Security patch update v3.2",
+        "keywords": ["security", "update", "patch"]
+    }
+
+    blockchain_node.transaction_handler.create_transaction(
+        transaction_data["device_id"], transaction_data["message"], transaction_data["keywords"]
+    )
+
+    # Mine a Block
+    blockchain_node.mine_block()

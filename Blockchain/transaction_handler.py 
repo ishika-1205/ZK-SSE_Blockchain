@@ -1,0 +1,125 @@
+import json
+import time
+import base64
+import blake3  # Faster hashing for IoT constraints
+import requests
+from pathlib import Path
+from zk_sse_crypto import ZKSSEEncryption  # IoT Optimized Encryption
+from blockchain_definitions import Blockchain  # Blockchain Interaction
+
+# IoT-Specific Configuration
+IOT_TRANSACTION_CONFIG = {
+    "max_memory_mb": 256,  # Memory constraint
+    "offload_crypto": True,  # Offload cryptographic operations to blockchain nodes
+    "use_low_power_mode": True,  # IoT power efficiency mode
+}
+
+class TransactionHandler:
+    def __init__(self, blockchain: Blockchain):
+        """Handles IoT transactions while maintaining efficiency constraints."""
+        self.blockchain = blockchain
+        self.encryption = ZKSSEEncryption()
+        self.transaction_cache = {}  # In-memory transaction storage
+
+    def validate_transaction(self, transaction):
+        """Validates transactions with IoT-friendly hashing and ZKP verification."""
+        required_keys = ["name", "file", "file_hash", "ct", "pi", "pk"]
+        if not all(k in transaction for k in required_keys):
+            print("⚠ Invalid transaction: Missing fields.")
+            return False
+
+        # Compute Hash for Verification
+        computed_hash = blake3.blake3(transaction["file"].encode()).hexdigest()
+        if computed_hash != transaction["file_hash"]:
+            print("🚨 Invalid transaction: Hash mismatch!")
+            return False
+        
+        # Verify ZK-Proof before committing the transaction
+        if not self.verify_zkp(transaction["pi"], transaction["name"]):
+            print("🚨 ZK-Proof validation failed.")
+            return False
+        
+        return True
+
+    def verify_zkp(self, zk_proof, transaction_name):
+        """Verifies Zero-Knowledge Proof for IoT transactions."""
+        response = requests.post("http://blockchain_node:5000/verify_zkp", json={
+            "zk_proof": zk_proof,
+            "transaction_name": transaction_name
+        })
+        return response.status_code == 200
+
+    def encrypt_and_store_transaction(self, device_id, sp_id, transaction_data):
+        """Encrypts and securely stores transaction metadata."""
+        print("[🔒] Encrypting IoT transaction...")
+
+        ke = self.encryption.generate_symmetric_key(device_id, sp_id)
+        encrypted_transaction = self.encryption.encrypt_message(json.dumps(transaction_data), ke)
+        
+        print("[📦] Storing transaction on IPFS...")
+        cid = self.store_on_ipfs(encrypted_transaction)
+        if not cid:
+            print("⚠ Error: Failed to store encrypted data on IPFS.")
+            return None
+        
+        print(f"[✅] Transaction stored. IPFS CID: {cid}")
+        return cid
+
+    def store_on_ipfs(self, encrypted_data):
+        """Stores encrypted transaction data in IPFS and returns CID."""
+        response = requests.post("http://ipfs_node:8080/api/v0/add", files={'file': encrypted_data})
+        if response.status_code == 200:
+            return response.json()["Hash"]
+        return None
+
+    def publish_transaction(self, transaction):
+        """Publishes IoT transaction metadata on the blockchain."""
+        if not self.validate_transaction(transaction):
+            print("⚠ Transaction validation failed. Aborting.")
+            return None
+
+        print("[🔄] Processing IoT transaction for blockchain storage...")
+
+        # Encrypt & Store Transaction in IPFS
+        cid = self.encrypt_and_store_transaction(transaction["name"], transaction["pk"], transaction)
+        if not cid:
+            return None
+
+        # Construct Blockchain Metadata
+        metadata = {
+            "H(CM)": transaction["file_hash"],
+            "CID": cid,
+            "Access Policy": "(IoT_GROUP_1 AND AUTHORIZED_USERS)"
+        }
+
+        # Sign metadata before submission
+        metadata_signature = blake3.blake3(str(metadata).encode()).hexdigest()
+        
+        print("[🌍] Publishing transaction metadata to blockchain...")
+        response = requests.post("http://blockchain_node:5000/store_metadata", json={
+            "metadata": metadata,
+            "signature": metadata_signature
+        })
+
+        if response.status_code == 200:
+            print("[✅] Transaction successfully recorded on the blockchain.")
+            return metadata
+        else:
+            print("⚠ Error: Failed to store metadata on blockchain.")
+            return None
+
+# Example Usage
+if __name__ == "__main__":
+    blockchain = Blockchain()
+    handler = TransactionHandler(blockchain)
+
+    transaction = {
+        "name": "IoT_Update_v3.5",
+        "file": "Firmware Patch for Security",
+        "file_hash": blake3.blake3("Firmware Patch for Security".encode()).hexdigest(),
+        "ct": "EncryptedContentHere",
+        "pi": "ZKProofData",
+        "pk": "PublicKeyOfDevice"
+    }
+
+    handler.publish_transaction(transaction)

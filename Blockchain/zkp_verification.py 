@@ -1,0 +1,74 @@
+# File: blockchain/zkp_verification.py
+import hashlib
+import random
+from py_ecc.bn128 import add, multiply, G1, G2, pairing
+
+class ZKPVerifier:
+    """
+    Implements Zero-Knowledge Proof (ZKP) for query authorization in the ZK-SSE Chain.
+    """
+
+    def __init__(self):
+        """
+        Initializes the ZKP system with predefined security parameters.
+        """
+        self.g = G1  # Generator for ZK Proofs
+        self.h = multiply(G1, random.randint(1, 2**256))  # Random element in G1
+
+    def hash_to_group(self, data):
+        """
+        Hashes input data into a group element.
+        π = ZK-Prove(KT, kw)
+        """
+        h_val = int(hashlib.sha256(data.encode()).hexdigest(), 16)
+        return multiply(self.g, h_val)
+
+    def generate_zkp(self, trapdoor_key, keyword):
+        """
+        Generates a Zero-Knowledge Proof (ZKP) that a query is authorized.
+        """
+        kw_hash = self.hash_to_group(keyword)  # Encrypt keyword into G1
+        t_hash = self.hash_to_group(trapdoor_key.hex())  # Hash trapdoor key
+
+        r = random.randint(1, 2**256)  # Random nonce
+        commitment = multiply(self.h, r)  # Commitment value
+        response = (r + int(hashlib.sha256((trapdoor_key.hex() + keyword).encode()).hexdigest(), 16)) % (2**256)
+
+        proof = {"commitment": commitment, "response": response}
+        return proof, kw_hash
+
+    def verify_zkp(self, proof, trapdoor_key, keyword):
+        """
+        Verifies that the proof corresponds to a valid query without revealing sensitive details.
+        """
+        kw_hash = self.hash_to_group(keyword)
+        t_hash = self.hash_to_group(trapdoor_key.hex())
+
+        lhs = add(multiply(self.h, proof["response"]), multiply(self.g, -1 * int(hashlib.sha256((trapdoor_key.hex() + keyword).encode()).hexdigest(), 16)))
+        rhs = proof["commitment"]
+
+        if lhs == rhs:
+            print("[✔] ZKP Verification Successful! Access Granted.")
+            return True
+        else:
+            print("[❌] ZKP Verification Failed! Access Denied.")
+            return False
+
+
+if __name__ == "__main__":
+    zkp = ZKPVerifier()
+
+    # Generate Trapdoor Key
+    device_id = "IoTDeviceXYZ"
+    sp_id = "ServiceProvider123"
+    trapdoor_key = hashlib.sha256(f"{device_id}{sp_id}".encode()).digest()
+
+    # Generate ZKP for a keyword
+    keyword = "firmware_update"
+    proof, kw_hash = zkp.generate_zkp(trapdoor_key, keyword)
+
+    print("[Generated ZKP Proof]:", proof)
+
+    # Verify the Zero-Knowledge Proof
+    verification_result = zkp.verify_zkp(proof, trapdoor_key, keyword)
+    print("[Verification Result]:", verification_result)

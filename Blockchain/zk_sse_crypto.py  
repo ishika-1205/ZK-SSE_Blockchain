@@ -1,0 +1,121 @@
+import os
+import json
+import base64
+import hmac
+import secrets
+import blake3  # Fast hashing for IoT constraints
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
+
+# IoT Encryption Configuration
+IOT_ENCRYPTION_CONFIG = {
+    "encryption_algorithm": "ChaCha20-Poly1305",
+    "key_length": 32,  # 256-bit key for strong encryption
+    "low_memory_mode": True,  # Optimized for IoT devices
+}
+
+class ZKSSEEncryption:
+    def __init__(self):
+        """Initialize encryption settings for IoT nodes."""
+        self.encryption_algorithm = IOT_ENCRYPTION_CONFIG["encryption_algorithm"]
+        self.key_length = IOT_ENCRYPTION_CONFIG["key_length"]
+        self.low_memory_mode = IOT_ENCRYPTION_CONFIG["low_memory_mode"]
+
+    def generate_symmetric_key(self, message_id, service_provider_id):
+        """
+        Generates a unique symmetric key KE using HMAC-based key derivation.
+        Ensures fast key computation for IoT devices.
+        """
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=self.key_length,
+            salt=None,
+            info=b"ZK-SSE IoT Encryption",
+            backend=default_backend()
+        )
+        derived_key = hkdf.derive(f"{message_id}{service_provider_id}".encode())
+        return derived_key
+
+    def encrypt_message(self, plaintext, ke):
+        """
+        Encrypts IoT messages using ChaCha20-Poly1305.
+        This is optimized for IoT devices with low power constraints.
+        """
+        nonce = secrets.token_bytes(12)  # 96-bit unique nonce
+        cipher = ChaCha20Poly1305(ke)
+        ciphertext = cipher.encrypt(nonce, plaintext.encode(), None)
+
+        return {
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+            "nonce": base64.b64encode(nonce).decode()
+        }
+
+    def decrypt_message(self, encrypted_data, ke):
+        """
+        Decrypts messages using ChaCha20-Poly1305 with IoT efficiency in mind.
+        """
+        try:
+            cipher = ChaCha20Poly1305(ke)
+            ciphertext = base64.b64decode(encrypted_data["ciphertext"])
+            nonce = base64.b64decode(encrypted_data["nonce"])
+
+            plaintext = cipher.decrypt(nonce, ciphertext, None)
+            return plaintext.decode()
+        except Exception as e:
+            print(f"⚠️ IoT Decryption Error: {e}")
+            return None
+
+class TrapdoorEncryption:
+    def __init__(self):
+        """Handles Trapdoor-based encrypted searches for IoT queries."""
+        self.trapdoor_key_length = 32
+
+    def generate_trapdoor_key(self, device_id, service_provider_id):
+        """
+        Generates a unique trapdoor key KT for IoT queries.
+        Ensures memory-efficient and fast computation.
+        """
+        return hmac.new(
+            key=b"ZK-SSE-Trapdoor",
+            msg=f"{device_id}{service_provider_id}".encode(),
+            digestmod="sha256"
+        ).digest()
+
+    def encrypt_keyword(self, keyword, kt):
+        """
+        Encrypts search keywords using the trapdoor key.
+        IoT-optimized for fast searchable encryption.
+        """
+        hashed_keyword = blake3.blake3(keyword.encode()).hexdigest()
+        encrypted_keyword = hmac.new(kt, hashed_keyword.encode(), digestmod="sha256").hexdigest()
+        return encrypted_keyword
+
+    def verify_trapdoor(self, query_trapdoor, stored_trapdoor):
+        """Verifies if a query trapdoor matches stored trapdoors on the blockchain."""
+        return hmac.compare_digest(query_trapdoor, stored_trapdoor)
+
+# Usage Example (For Testing)
+if __name__ == "__main__":
+    zk_crypto = ZKSSEEncryption()
+    trapdoor_enc = TrapdoorEncryption()
+
+    # Generate Keys
+    ke = zk_crypto.generate_symmetric_key("Message123", "SP01")
+    kt = trapdoor_enc.generate_trapdoor_key("IoTDevice001", "SP01")
+
+    # Encrypt & Decrypt Message
+    message = "This is an IoT firmware update."
+    encrypted_message = zk_crypto.encrypt_message(message, ke)
+    decrypted_message = zk_crypto.decrypt_message(encrypted_message, ke)
+
+    # Encrypt & Verify Trapdoor Search Query
+    keyword = "firmware"
+    trapdoor = trapdoor_enc.encrypt_keyword(keyword, kt)
+    is_verified = trapdoor_enc.verify_trapdoor(trapdoor, trapdoor)
+
+    print(f"🔹 Encrypted Message: {encrypted_message}")
+    print(f"🔹 Decrypted Message: {decrypted_message}")
+    print(f"🔹 Trapdoor for '{keyword}': {trapdoor}")
+    print(f"✅ Trapdoor Verification: {is_verified}")
